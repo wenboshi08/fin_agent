@@ -1,0 +1,10 @@
+{
+  "chunk_strategy": "dataset-aware",
+  "embedding_model": "finlang",
+  "reranker": "bge",
+  "mmr_lambda": 0.7,
+  "multiquery": true,
+  "top_k": 10,
+  "n": 20,
+  "seed": 42
+}

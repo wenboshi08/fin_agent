@@ -1,0 +1,15 @@
+.env
+Dataset/
+chroma_stores/
+results/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.venv/
+
+.tools/
+
+*.zip
+finagent.egg-info/
+.DS_Store

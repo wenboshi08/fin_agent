@@ -1,0 +1,42 @@
+[project]
+name = "finagent"
+version = "0.1.0"
+description = "Benchmark-driven financial RAG system (ICAIF-24 Finance RAG Challenge)"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "langchain>=0.3",
+    "langchain-community>=0.3",
+    "langchain-chroma>=0.1",
+    "langchain-huggingface>=0.1",
+    "langchain-openai>=0.2",
+    "langchain-text-splitters>=0.3",
+    "sentence-transformers>=3.0",
+    "chromadb>=0.5",
+    "rank-bm25>=0.2.2",
+    "ragas>=0.2",
+    "onnxruntime<1.20",  # chromadb/ragas transitive dep; 1.20+ lacks macOS x86_64 wheels
+    "torch<2.3",  # torch 2.3+ lacks macOS x86_64 wheels; 2.2.2 still supported
+    "transformers<5",  # transformers 5.x requires torch>=2.5, incompatible with 2.2.2
+    "numpy<2",  # torch 2.2.2 compiled against NumPy 1.x
+    "openai>=1.40",
+    "pandas>=2.0",
+    "numpy>=1.26",
+    "matplotlib>=3.8",
+    "python-dotenv>=1.0",
+    "tqdm>=4.66",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["finrag"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"

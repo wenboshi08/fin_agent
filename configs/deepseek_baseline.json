@@ -1,0 +1,12 @@
+{
+  "provider": "deepseek",
+  "model": "deepseek-v4-flash",
+  "chunk_strategy": "dataset-aware",
+  "embedding_model": "finlang",
+  "reranker": "bge",
+  "mmr_lambda": 0.7,
+  "multiquery": false,
+  "top_k": 5,
+  "n": 20,
+  "seed": 42
+}
