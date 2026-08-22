@@ -250,5 +250,3 @@ finagent/
 ## Documentation
 
 - `docs/FINAGENT_DESIGN.md` — System design document
-- `docs/MVP_SCOPE.md` — Narrowed MVP scope
-- `docs/observability_slo.md` — SLO / monitoring design
