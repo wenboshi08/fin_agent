@@ -1,7 +1,7 @@
 {
   "chunk_strategy": "dataset-aware",
-  "embedding_model": "finlang",
-  "reranker": "bge",
+  "embedding_model": "e5-mistral",
+  "reranker": "bge-gemma",
   "mmr_lambda": 0.7,
   "multiquery": true,
   "top_k": 5,

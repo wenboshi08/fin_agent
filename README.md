@@ -13,12 +13,23 @@ The reference implementation is
 ## Highlights
 
 - **7 ICAIF-24 datasets**: FinanceBench, FinQABench, FinDER, TATQA, FinQA, ConvFinQA, MultiHiertt.
-- **Hybrid retrieval**: Dense (ChromaDB + FinLang embeddings) + BM25 → RRF fusion → MMR diversity → Cross-Encoder rerank.
+- **Hybrid retrieval**: Dense (ChromaDB + e5-mistral-7b embeddings) + BM25 → RRF fusion → MMR diversity → LLM rerank (bge-reranker-v2-gemma).
 - **Grounded generation**: DeepSeek / Qwen via OpenAI-compatible API, with source citations.
 - **LangChain-based architecture**: built on `langchain-chroma`, `langchain-community`, `langchain-huggingface`, `langchain-openai`, and `langchain-text-splitters`.
 - **Two-layer evaluation**: NDCG@10 for retrieval quality, RAGAS for answer faithfulness/relevancy/context utilization.
 - **Configurable experiments**: all RAGAS experiment settings come from `configs/*.json`, with CLI overrides.
 - **Runs anywhere**: local CLI, dependency-free synthetic demo, and a Google Colab notebook.
+
+> **Default models (GPU recommended).** Dense retrieval defaults to
+> `intfloat/e5-mistral-7b-instruct` — the base model that Fin-E5 (FinMTEB,
+> [arXiv:2502.10990](https://arxiv.org/abs/2502.10990)) was fine-tuned from —
+> and reranking defaults to `BAAI/bge-reranker-v2-gemma`. Both are LLM-based;
+> the pipeline loads them **sequentially** (dense pass → offload embeddings to
+> CPU → rerank), so peak VRAM is ~14 GB. Run them on a GPU (a Colab **L4**
+> instance is ideal — see `colab/FinAgent_Colab.ipynb`). For CPU-only runs use
+> the smaller legacy stack: `--embedding-model finlang --reranker bge-m3`.
+> If access to `FinanceMTEB/FinE5` weights is granted, swap the model id in
+> `finrag/config.py` (`INSTRUCT_EMBEDDING_SPECS`) — no other changes needed.
 
 ---
 
@@ -37,7 +48,7 @@ The reference implementation is
    ┌─────────────────────────┬──────────────────────────┬──────────────────────┐
    │      Chunking           │        Indexing          │      Retrieval        │
    │ LangChain text splitters│ ChromaDB + BM25          │ Dense + BM25 + RRF    │
-   │ dataset-aware / fixed / │ FinLang embeddings       │ + MMR + reranker      │
+   │ dataset-aware / fixed / │ e5-mistral embeddings     │ + MMR + reranker      │
    │ semantic / tfidf        │ persistent cache         │                      │
    └─────────────────────────┴──────────────────────────┴──────────────────────┘
                                          ▼
@@ -57,14 +68,14 @@ The reference implementation is
 
 1. Load `corpus.jsonl`, `queries.jsonl`, and `qrels.tsv` from `Dataset/`.
 2. Split each document into chunks using a configurable strategy.
-3. Embed chunks with `FinLang/finance-embeddings-investopedia` and store them in a persistent ChromaDB collection.
+3. Embed chunks with `intfloat/e5-mistral-7b-instruct` (instruction-prefixed queries, plain documents) and store them in a persistent ChromaDB collection.
 4. Build a BM25 index over the same chunks.
 5. For each query:
    - optional MultiQuery expansion,
    - dense retrieval and BM25 retrieval,
    - RRF fusion,
    - MMR diversity selection (passage datasets),
-   - Cross-Encoder reranking,
+   - LLM reranking,
    - grounded answer generation with citations.
 6. Evaluate retrieval with NDCG@10 and generation with RAGAS.
 

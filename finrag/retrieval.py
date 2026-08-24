@@ -11,6 +11,7 @@ from typing import Optional
 from langchain_community.retrievers import BM25Retriever
 from rank_bm25 import BM25Okapi
 
+from . import config
 from .chunking import ChunkResult
 
 logger = logging.getLogger(__name__)
@@ -56,22 +57,24 @@ def expand_query(query: str, llm: Optional[object]) -> list[str]:
         return [query]
 
 
-def retrieve_and_rerank(
+def build_candidates(
     vectorstore,
     bm25_retriever: BM25Retriever,
     bm25_okapi: BM25Okapi,
     chunk_result: ChunkResult,
     query: str,
-    reranker,
     *,
     dataset_type: str = "passage",
     fetch_k: int = 75,
     rerank_top_n: int = 30,
-    k: int = 10,
     llm: Optional[object] = None,
     mmr_lambda: Optional[float] = 0.7,
-) -> list[tuple[str, float]]:
-    """Full per-query retrieval: dense + BM25 -> RRF -> best chunk -> rerank."""
+) -> list[tuple[str, str]]:
+    """Stage 1 (embedding model resident): dense + BM25 -> RRF -> best chunk.
+
+    Returns up to ``rerank_top_n`` ``(doc_id, chunk_text)`` pairs in RRF order,
+    ready to be scored by a reranker in stage 2.
+    """
     queries = expand_query(query, llm) if llm is not None else [query]
 
     # ── Dense retrieval per query variant ────────────────────────────────
@@ -126,12 +129,64 @@ def retrieve_and_rerank(
             fallback = seen_content.get(oid) or chunk_by_doc.get(oid, "")
             best_chunk[oid] = (0.0, fallback)
 
-    # ── Cross-encoder rerank ────────────────────────────────────────────
-    pairs = [(query, best_chunk[oid][1]) for oid in candidate_ids]
-    scores = reranker.predict(pairs, batch_size=32, show_progress_bar=False)
+    return [(oid, best_chunk[oid][1]) for oid in candidate_ids]
+
+
+def rerank_candidates(
+    reranker,
+    query: str,
+    candidates: list[tuple[str, str]],
+    k: int = 10,
+) -> list[tuple[str, float]]:
+    """Stage 2 (reranker resident): score candidate pairs and return top-k.
+
+    ``candidates`` are ``(doc_id, chunk_text)`` pairs from :func:`build_candidates`.
+    """
+    if not candidates:
+        return []
+    pairs = [(query, text) for _, text in candidates]
+    scores = reranker.predict(
+        pairs, batch_size=config.RERANK_PREDICT_BATCH_SIZE, show_progress_bar=False
+    )
     ranked = sorted(
-        zip(candidate_ids, scores.tolist()),
+        zip([doc_id for doc_id, _ in candidates], scores.tolist()),
         key=lambda x: x[1],
         reverse=True,
     )
     return ranked[:k]
+
+
+def retrieve_and_rerank(
+    vectorstore,
+    bm25_retriever: BM25Retriever,
+    bm25_okapi: BM25Okapi,
+    chunk_result: ChunkResult,
+    query: str,
+    reranker,
+    *,
+    dataset_type: str = "passage",
+    fetch_k: int = 75,
+    rerank_top_n: int = 30,
+    k: int = 10,
+    llm: Optional[object] = None,
+    mmr_lambda: Optional[float] = 0.7,
+) -> list[tuple[str, float]]:
+    """Compatibility wrapper: run both stages back to back.
+
+    Prefer calling :func:`build_candidates` and :func:`rerank_candidates`
+    separately so the embedding model can be offloaded between stages —
+    the two LLM models do not fit on one consumer GPU at the same time.
+    """
+    candidates = build_candidates(
+        vectorstore,
+        bm25_retriever,
+        bm25_okapi,
+        chunk_result,
+        query,
+        dataset_type=dataset_type,
+        fetch_k=fetch_k,
+        rerank_top_n=rerank_top_n,
+        llm=llm,
+        mmr_lambda=mmr_lambda,
+    )
+    return rerank_candidates(reranker, query, candidates, k=k)

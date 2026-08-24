@@ -22,7 +22,7 @@ is easy to extend, and integrates cleanly with RAGAS evaluation.
 
 - Seven ICAIF-24 benchmark datasets.
 - Dataset-aware chunking with multiple configurable strategies.
-- Dense + BM25 hybrid retrieval, RRF fusion, MMR diversity, and Cross-Encoder reranking.
+- Dense + BM25 hybrid retrieval, RRF fusion, MMR diversity, and LLM reranking.
 - Grounded answer generation using DeepSeek or Qwen through OpenAI-compatible APIs.
 - NDCG@10 retrieval evaluation and RAGAS answer evaluation.
 - Experiment configuration through `configs/*.json`.
@@ -70,6 +70,7 @@ is easy to extend, and integrates cleanly with RAGAS evaluation.
 | Reproducibility | `uv.lock`, pinned dependency ranges, fixed dataset paths, deterministic sampling seeds |
 | Low cost | Retrieval benchmark requires no LLM; generation uses low-cost DeepSeek/Qwen APIs; MultiQuery is optional |
 | Portability | Runs on macOS x86_64, Linux, and Google Colab with the same `uv sync` flow |
+| GPU compute | Default LLM embedding + reranker load sequentially (embed → offload to CPU → rerank), peak ~14 GB VRAM (Colab L4); CPU-friendly legacy models selectable via aliases |
 | Extensibility | LangChain abstractions allow swapping embedding models, rerankers, and LLM providers |
 | Testability | Pure functions for chunking/NDCG; synthetic demo requires no external services |
 
@@ -115,7 +116,7 @@ is easy to extend, and integrates cleanly with RAGAS evaluation.
    - Produces `ChunkResult` with text, IDs, original corpus IDs, and LangChain `Document` objects.
 
 3. **Indexing** (`vectorstore.py`, `retrieval.py`)
-   - Embeds chunks with `FinLang/finance-embeddings-investopedia`.
+   - Embeds chunks with `intfloat/e5-mistral-7b-instruct` (documents as-is; queries get a task instruction prefix).
    - Persists vectors in `langchain_chroma.Chroma`.
    - Builds a `BM25Retriever` from the same chunk documents.
 
@@ -125,7 +126,7 @@ is easy to extend, and integrates cleanly with RAGAS evaluation.
    - Sparse retrieval through BM25.
    - RRF fusion of dense and sparse rankings.
    - Best-chunk selection via BM25 scores.
-   - Cross-Encoder reranking to produce the final top-k.
+   - LLM reranking (`BAAI/bge-reranker-v2-gemma` via `FlagLLMReranker`) to produce the final top-k.
 
 5. **Generation** (`generation.py`)
    - Builds a `ChatPromptTemplate` with the retrieved excerpts.
@@ -161,8 +162,13 @@ Uses LangChain `Document` objects so downstream BM25 and Chroma components accep
 
 ### 4.3 Models (`models.py`)
 
-- `HuggingFaceEmbeddings` for dense embeddings.
-- `CrossEncoder` from `sentence_transformers` for reranking.
+- `E5InstructEmbeddings` (a `SentenceTransformer` wrapper that applies a task
+  instruction prefix to queries) for instruction-based LLM embeddings
+  (`intfloat/e5-mistral-7b-instruct`, and `FinanceMTEB/FinE5` once its weights
+  become accessible); `HuggingFaceEmbeddings` for encoder-based models.
+- `FlagLLMReranker` (FlagEmbedding) for decoder-only rerankers
+  (`BAAI/bge-reranker-v2-gemma`); `sentence_transformers.CrossEncoder` for
+  classic cross-encoders.
 - `ChatOpenAI` for DeepSeek and Qwen (OpenAI-compatible endpoints).
 - A rate-limited `get_eval_llm` for RAGAS judge calls.
 
@@ -180,7 +186,7 @@ query
   ├─ BM25: BM25Retriever
   ├─ RRF fusion
   ├─ Best chunk per candidate
-  └─ Cross-Encoder rerank → top-k
+  └─ LLM rerank (bge-reranker-v2-gemma) → top-k
 ```
 
 ### 4.6 Generation (`generation.py`)
@@ -250,7 +256,7 @@ detail. It affects maintainability, comparability, and future extensibility.
 | Area | LangChain Component | Effect |
 |---|---|---|
 | Chunking | `RecursiveCharacterTextSplitter`, `Document` | Robust splitting and uniform chunk metadata |
-| Embeddings | `HuggingFaceEmbeddings` | Pluggable embedding models (FinLang, BGE, MPNet) |
+| Embeddings | `HuggingFaceEmbeddings`, `E5InstructEmbeddings` | Pluggable embedding models (e5-mistral/Fin-E5 family, FinLang, BGE, MPNet) |
 | Vector store | `langchain_chroma.Chroma` | Persistent caching, similarity search, MMR |
 | Sparse retrieval | `BM25Retriever` | Direct integration with LangChain documents |
 | LLM | `ChatOpenAI` | DeepSeek/Qwen via OpenAI-compatible endpoints |

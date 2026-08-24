@@ -106,19 +106,56 @@ DATASET_CONFIGS: dict[str, DatasetConfig] = {
 }
 
 # ── Model defaults ──────────────────────────────────────────────────────────
-DEFAULT_EMBEDDING_MODEL = "FinLang/finance-embeddings-investopedia"
+# Default dense retriever: E5-Mistral-7B (instruction-based, LLM encoder).
+# This is the base model that Fin-E5 (FinMTEB, arXiv:2502.10990) was fine-tuned
+# from; the Fin-E5 weights are currently access-gated, so we run the base model
+# with the same usage pattern. Once access to FinanceMTEB/FinE5 is granted,
+# swap the model id below (and in INSTRUCT_EMBEDDING_SPECS) — no other changes.
+DEFAULT_EMBEDDING_MODEL = "intfloat/e5-mistral-7b-instruct"
+DEFAULT_EMBEDDING_QUERY_INSTRUCTION = (
+    "Given a financial question, retrieve relevant passages that answer the question"
+)
 EMBEDDING_MODEL_CHOICES = {
-    "finlang": DEFAULT_EMBEDDING_MODEL,
+    "e5-mistral": DEFAULT_EMBEDDING_MODEL,
+    "finlang": "FinLang/finance-embeddings-investopedia",
     "bge-m3": "BAAI/bge-m3",
     "all-mpnet": "sentence-transformers/all-mpnet-base-v2",
 }
 
-DEFAULT_RERANKER_MODEL = "BAAI/bge-reranker-v2-m3"
+# Instruction-based (decoder-only) embedding models. Queries are prefixed with
+# "Instruct: <task>\nQuery: " before encoding; documents are embedded as-is.
+INSTRUCT_EMBEDDING_SPECS: dict[str, dict] = {
+    DEFAULT_EMBEDDING_MODEL: {
+        "query_instruction": DEFAULT_EMBEDDING_QUERY_INSTRUCTION,
+        "max_seq_length": 4096,
+        "batch_size": 4,
+    },
+    # Reserved: same usage as e5-mistral once Fin-E5 weights become available.
+    "FinanceMTEB/FinE5": {
+        "query_instruction": DEFAULT_EMBEDDING_QUERY_INSTRUCTION,
+        "max_seq_length": 4096,
+        "batch_size": 4,
+    },
+}
+
+# Default reranker: LLM-based cross-encoder (gemma-2b), scored with
+# FlagEmbedding.FlagLLMReranker instead of sentence-transformers CrossEncoder.
+DEFAULT_RERANKER_MODEL = "BAAI/bge-reranker-v2-gemma"
 RERANKER_MODEL_CHOICES = {
-    "bge": DEFAULT_RERANKER_MODEL,
+    "bge-gemma": DEFAULT_RERANKER_MODEL,
+    "bge-m3": "BAAI/bge-reranker-v2-m3",
     "mini": "cross-encoder/ms-marco-MiniLM-L-6-v2",
     "electra": "cross-encoder/ms-marco-electra-base",
 }
+
+# Decoder-only rerankers that need FlagLLMReranker (yes-token logit scoring).
+LLM_RERANKER_MODELS = {
+    "BAAI/bge-reranker-v2-gemma",
+    "BAAI/bge-reranker-v2-minicpm-layerwise",
+    "BAAI/bge-reranker-v2.5-gemma2-lightweight",
+}
+RERANKER_MAX_LENGTH = 512
+RERANK_PREDICT_BATCH_SIZE = int(os.getenv("FINAGENT_RERANK_BATCH_SIZE", "8"))
 
 # ── LLM (DeepSeek / Qwen, OpenAI-compatible) ───────────────────────────────
 DEEPSEEK_DEFAULT_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")

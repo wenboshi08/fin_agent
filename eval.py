@@ -83,8 +83,8 @@ def resolve_settings(args, cfg: dict) -> dict:
 
     top_k = args.top_k if args.top_k is not None else cfg.get("top_k", 5)
     chunk_strategy = args.chunk_strategy or cfg.get("chunk_strategy", "dataset-aware")
-    embedding_alias = args.embedding_model or cfg.get("embedding_model", "finlang")
-    reranker_alias = args.reranker or cfg.get("reranker", "bge")
+    embedding_alias = args.embedding_model or cfg.get("embedding_model", "e5-mistral")
+    reranker_alias = args.reranker or cfg.get("reranker", "bge-gemma")
 
     if args.no_mmr:
         mmr_lambda = 0.0
@@ -130,10 +130,16 @@ def main() -> None:
     s = resolve_settings(args, cfg)
 
     # Lazy imports: avoid loading heavy model deps when only --compare is used
-    from finrag.models import get_eval_llm, get_llm, get_reranker
-    from finrag.pipeline import prepare_retriever
     from finrag.generation import generate_answer
-    from finrag.retrieval import retrieve_and_rerank
+    from finrag.models import (
+        get_eval_llm,
+        get_llm,
+        get_reranker,
+        offload_embedding_model,
+        offload_reranker,
+    )
+    from finrag.pipeline import prepare_retriever
+    from finrag.retrieval import build_candidates, rerank_candidates
 
     data = prepare_retriever(
         s["dataset"],
@@ -147,29 +153,38 @@ def main() -> None:
         sys.exit(1)
 
     llm = get_llm(s["provider"], s["model"])
-    reranker = get_reranker(s["reranker"])
 
     random.seed(s["seed"])
     sample = random.sample(data["queries"], min(s["n"], len(data["queries"])))
+
+    # ── Pass 1: candidate generation (embedding model resident) ──────────
+    offload_reranker()
+    candidates_map: dict[str, list[tuple[str, str]]] = {}
+    for q in sample:
+        candidates_map[q["_id"]] = build_candidates(
+            data["vectorstore"],
+            data["bm25_retriever"],
+            data["bm25_okapi"],
+            data["chunks"],
+            q["text"],
+            dataset_type=dataset_cfg.dataset_type,
+            fetch_k=dataset_cfg.fetch_k,
+            rerank_top_n=dataset_cfg.rerank_top_n,
+            llm=llm if s["use_multiquery"] else None,
+            mmr_lambda=s["mmr_lambda"],
+        )
+
+    # ── Free GPU memory, then rerank ─────────────────────────────────────
+    offload_embedding_model(s["embedding_model"])
+    reranker = get_reranker(s["reranker"])
 
     retrieved_map: dict[str, list[tuple[str, float]]] = {}
     answers_map: dict[str, str] = {}
 
     for q in sample:
         qid = q["_id"]
-        retrieved = retrieve_and_rerank(
-            data["vectorstore"],
-            data["bm25_retriever"],
-            data["bm25_okapi"],
-            data["chunks"],
-            q["text"],
-            reranker,
-            dataset_type=dataset_cfg.dataset_type,
-            fetch_k=dataset_cfg.fetch_k,
-            rerank_top_n=dataset_cfg.rerank_top_n,
-            k=s["top_k"],
-            llm=llm if s["use_multiquery"] else None,
-            mmr_lambda=s["mmr_lambda"],
+        retrieved = rerank_candidates(
+            reranker, q["text"], candidates_map[qid], k=s["top_k"]
         )
         retrieved_map[qid] = retrieved
         if llm is not None:

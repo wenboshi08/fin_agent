@@ -11,11 +11,18 @@ from .chunking import split_documents
 from .data import load_jsonl, load_qrels, make_corpus_lookup
 from .evaluation import compute_ndcg
 from .generation import CitedSource, GenerationResult, generate_answer
-from .models import get_embedding_model, get_llm, get_reranker
+from .models import (
+    get_embedding_model,
+    get_llm,
+    get_reranker,
+    offload_embedding_model,
+    offload_reranker,
+)
 from .retrieval import (
     build_bm25_okapi,
     build_bm25_retriever,
-    retrieve_and_rerank,
+    build_candidates,
+    rerank_candidates,
 )
 from .vectorstore import get_vectorstore
 
@@ -68,9 +75,14 @@ def prepare_retriever(
         strategy=chunk_strategy,
     )
 
-    embedding = get_embedding_model(embedding_model)
+    embedding_model_name = embedding_model or config.DEFAULT_EMBEDDING_MODEL
+    embedding = get_embedding_model(embedding_model_name)
     vectorstore = get_vectorstore(
-        dataset_name, chunks, embedding, force_rebuild=force_rebuild
+        dataset_name,
+        chunks,
+        embedding,
+        force_rebuild=force_rebuild,
+        model_name=embedding_model_name,
     )
     bm25_retriever = build_bm25_retriever(chunks.lc_docs, fetch_k=cfg.fetch_k)
     bm25_okapi = build_bm25_okapi(chunks.texts)
@@ -111,31 +123,48 @@ def run_dataset_benchmark(
     )
     cfg = data["cfg"]
     llm = get_llm(provider, model) if use_multiquery else None
-    reranker = get_reranker(reranker_model)
 
     results: dict[str, dict[str, float]] = {}
     errors: list[str] = []
+
+    # ── Pass 1: candidate generation (embedding model resident) ──────────
+    # A reranker cached from a previous dataset run must leave the GPU first.
+    offload_reranker()
+    candidates: dict[str, list[tuple[str, str]]] = {}
     for q in data["queries"]:
         qid = q["_id"]
         try:
-            retrieved = retrieve_and_rerank(
+            candidates[qid] = build_candidates(
                 data["vectorstore"],
                 data["bm25_retriever"],
                 data["bm25_okapi"],
                 data["chunks"],
                 q["text"],
-                reranker,
                 dataset_type=cfg.dataset_type,
                 fetch_k=cfg.fetch_k,
                 rerank_top_n=cfg.rerank_top_n,
-                k=top_k,
                 llm=llm,
                 mmr_lambda=mmr_lambda,
             )
-            results[qid] = {doc_id: float(score) for doc_id, score in retrieved}
         except Exception as exc:
             errors.append(f"{qid}: {exc}")
-            logger.exception("Retrieval failed for query %s", qid)
+            logger.exception("Candidate retrieval failed for query %s", qid)
+
+    # ── Free GPU memory, then load the reranker ──────────────────────────
+    offload_embedding_model(embedding_model)
+    reranker = get_reranker(reranker_model)
+
+    # ── Pass 2: rerank candidates ────────────────────────────────────────
+    for q in data["queries"]:
+        qid = q["_id"]
+        if qid not in candidates:
+            continue
+        try:
+            ranked = rerank_candidates(reranker, q["text"], candidates[qid], k=top_k)
+            results[qid] = {doc_id: float(score) for doc_id, score in ranked}
+        except Exception as exc:
+            errors.append(f"{qid}: {exc}")
+            logger.exception("Reranking failed for query %s", qid)
 
     ndcg = compute_ndcg(data["qrels"], results, k=top_k)
     elapsed = time.time() - start
@@ -172,22 +201,27 @@ def run_rag_query(
     )
     cfg = data["cfg"]
     llm = get_llm(provider, model)
-    reranker = get_reranker(reranker_model)
 
-    retrieved = retrieve_and_rerank(
+    # ── Pass 1: candidate generation (embedding model resident) ──────────
+    offload_reranker()
+    candidates = build_candidates(
         data["vectorstore"],
         data["bm25_retriever"],
         data["bm25_okapi"],
         data["chunks"],
         query,
-        reranker,
         dataset_type=cfg.dataset_type,
         fetch_k=cfg.fetch_k,
         rerank_top_n=cfg.rerank_top_n,
-        k=top_k,
         llm=llm if use_multiquery else None,
         mmr_lambda=mmr_lambda,
     )
+
+    # ── Free GPU memory, then rerank ─────────────────────────────────────
+    offload_embedding_model(embedding_model)
+    reranker = get_reranker(reranker_model)
+    retrieved = rerank_candidates(reranker, query, candidates, k=top_k)
+
     if llm is None:
         return GenerationResult(
             query=query,

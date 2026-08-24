@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 import logging
+import re
 import shutil
-from pathlib import Path
 
 from langchain_chroma import Chroma
 
@@ -15,15 +15,27 @@ logger = logging.getLogger(__name__)
 _BATCH_SIZE = 64
 
 
+def _model_slug(model_name: str) -> str:
+    return re.sub(r"[^A-Za-z0-9._-]+", "_", model_name).strip("_").lower()
+
+
 def get_vectorstore(
     dataset_name: str,
     chunk_result: ChunkResult,
     embedding_model,
     *,
     force_rebuild: bool = False,
+    model_name: str | None = None,
 ) -> Chroma:
-    """Return a persisted langchain_chroma.Chroma store for a dataset."""
-    persist_dir = config.CHROMA_DIR / dataset_name
+    """Return a persisted langchain_chroma.Chroma store for a dataset.
+
+    The persist directory is keyed by embedding model (when known) because
+    stores built with models of different dimensionality are incompatible.
+    """
+    if model_name:
+        persist_dir = config.CHROMA_DIR / f"{dataset_name}__{_model_slug(model_name)}"
+    else:
+        persist_dir = config.CHROMA_DIR / dataset_name
 
     if force_rebuild and persist_dir.exists():
         logger.info("Force rebuild: removing %s ...", persist_dir)

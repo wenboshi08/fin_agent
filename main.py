@@ -49,9 +49,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--chunk-strategy", choices=["dataset-aware", "fixed", "semantic", "tfidf"],
                         default="dataset-aware", help="Chunking strategy.")
     parser.add_argument("--embedding-model", choices=list(config.EMBEDDING_MODEL_CHOICES),
-                        default="finlang", help="Embedding model alias.")
+                        default="e5-mistral", help="Embedding model alias.")
     parser.add_argument("--reranker", choices=list(config.RERANKER_MODEL_CHOICES),
-                        default="bge", help="Reranker model alias.")
+                        default="bge-gemma", help="Reranker model alias.")
     parser.add_argument("--mmr-lambda", type=float, default=config.DEFAULT_MMR_LAMBDA,
                         help="MMR lambda (0 disables MMR).")
     parser.add_argument("--no-mmr", action="store_true", default=False,
